@@ -1,95 +1,87 @@
 @echo off
-echo Building Collector Application...
+setlocal
 
-REM Clean up previous build
-if exist build rmdir /s /q build
-if exist collector.dll del collector.dll
-if exist collector.lib del collector.lib
-if exist collector.exp del collector.exp
-if exist collector.def del collector.def
+set "SCRIPT_DIR=%~dp0"
+set "BUILD_DIR=%SCRIPT_DIR%build"
+set "RELEASE_DIR=%BUILD_DIR%\Release"
+set "BIN_DIR=%SCRIPT_DIR%bin"
+set "GNUCOBOL_PATH=C:\GnuCOBOL"
 
-REM Initialize Visual Studio environment
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+:: Initialize Visual Studio environment for x64
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
 
-REM Add GnuCOBOL to PATH and set include directory
-set PATH=C:\GnuCOBOL\bin_x64;%PATH%
-set INCLUDE=C:\GnuCOBOL\include;%INCLUDE%
+:: Set GnuCOBOL environment
+set "PATH=%GNUCOBOL_PATH%\bin_x64;%PATH%"
+set "COB_CFLAGS=-I%GNUCOBOL_PATH%\include"
+set "COB_LDFLAGS=/LIBPATH:%GNUCOBOL_PATH%\lib_x64"
+set "LIB=%GNUCOBOL_PATH%\lib_x64;%LIB%"
 
-REM Create build and bin directories
-mkdir build
-cd build
-mkdir bin
+:: Create build directory if it doesn't exist
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-REM Compile COBOL program
 echo Compiling COBOL program...
-cobc -v -b -free -fimplicit-init -I C:\GnuCOBOL\include -o collector.dll -L C:\GnuCOBOL\lib_x64 ..\src\cobol\collector.cob
-
-REM Create DEF file
-echo Creating DEF file...
-echo EXPORTS > collector.def
-echo init_collector >> collector.def
-echo cleanup_collector >> collector.def
-echo add_movie >> collector.def
-echo add_tvseries >> collector.def
-echo add_anime >> collector.def
-echo add_game >> collector.def
-echo add_manga >> collector.def
-echo add_comic >> collector.def
-echo add_book >> collector.def
-echo add_magazine >> collector.def
-echo list_movies >> collector.def
-echo list_tvseries >> collector.def
-echo list_anime >> collector.def
-echo list_games >> collector.def
-echo list_manga >> collector.def
-echo list_comics >> collector.def
-echo list_books >> collector.def
-echo list_magazines >> collector.def
-
-REM Generate import library
-echo Generating import library...
-lib /def:collector.def /out:collector.lib /machine:x64
-
-REM Configure with CMake
-echo Configuring with CMake...
-cmake .. -G "Visual Studio 17 2022" -A x64
-
-REM Build the project
-echo Building the project...
-cmake --build . --config Release
-
-REM Copy COBOL DLL and its dependencies
-echo Copying DLLs...
-copy collector.dll bin\
-copy collector.lib bin\
-
-REM Copy GnuCOBOL dependencies
-echo Searching for DLLs in: C:\GnuCOBOL\bin_x64;C:\mingw64\bin;C:\msys64\mingw64\bin
-for %%p in (C:\GnuCOBOL\bin_x64;C:\mingw64\bin;C:\msys64\mingw64\bin) do (
-    if exist "%%p\libcob.dll" copy "%%p\libcob.dll" bin\
-    if exist "%%p\libgcc_s_seh-1.dll" copy "%%p\libgcc_s_seh-1.dll" bin\
-    if exist "%%p\mpir.dll" copy "%%p\mpir.dll" bin\
-    if exist "%%p\libdb48.dll" copy "%%p\libdb48.dll" bin\
-    if exist "%%p\pdcurses.dll" copy "%%p\pdcurses.dll" bin\
-    if exist "%%p\iconv-2.dll" copy "%%p\iconv-2.dll" bin\
-    if exist "%%p\libxml2.dll" copy "%%p\libxml2.dll" bin\
-    if exist "%%p\liblzma.dll" copy "%%p\liblzma.dll" bin\
-    if exist "%%p\zlib1.dll" copy "%%p\zlib1.dll" bin\
+cobc -v -m -o "%BUILD_DIR%\mediamatrix.dll" "%SCRIPT_DIR%\src\cobol\mediamatrix.cob"
+if errorlevel 1 (
+    echo Failed to compile COBOL program
+    exit /b 1
 )
 
-REM Copy Qt dependencies
-echo Deploying Qt dependencies...
-mkdir bin\platforms
-copy "D:\Qt\6.8.1\msvc2022_64\bin\Qt6Core.dll" bin\
-copy "D:\Qt\6.8.1\msvc2022_64\bin\Qt6Gui.dll" bin\
-copy "D:\Qt\6.8.1\msvc2022_64\bin\Qt6Widgets.dll" bin\
-copy "D:\Qt\6.8.1\msvc2022_64\plugins\platforms\qwindows.dll" bin\platforms\
+:: Create DEF file for the DLL
+echo LIBRARY mediamatrix > "%BUILD_DIR%\mediamatrix.def"
+echo EXPORTS >> "%BUILD_DIR%\mediamatrix.def"
+echo     list_items >> "%BUILD_DIR%\mediamatrix.def"
+echo     add_item >> "%BUILD_DIR%\mediamatrix.def"
+echo     edit_item >> "%BUILD_DIR%\mediamatrix.def"
+echo     delete_item >> "%BUILD_DIR%\mediamatrix.def"
 
-cd ..
+:: Generate import library with /NOEXP to prevent decorated names
+lib /def:"%BUILD_DIR%\mediamatrix.def" /out:"%BUILD_DIR%\mediamatrix.lib" /machine:x64 /NOEXP
+if errorlevel 1 (
+    echo Failed to generate import library
+    exit /b 1
+)
 
+:: Configure and build with CMake
+cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+if errorlevel 1 (
+    echo Failed to configure CMake
+    exit /b 1
+)
+
+cmake --build "%BUILD_DIR%" --config Release
+if errorlevel 1 (
+    echo Failed to build project
+    exit /b 1
+)
+
+:: Copy DLLs and create necessary directories
+if not exist "%RELEASE_DIR%\plugins" mkdir "%RELEASE_DIR%\plugins"
+if not exist "%RELEASE_DIR%\data" mkdir "%RELEASE_DIR%\data"
+
+:: Create qt.conf
+echo [Paths] > "%RELEASE_DIR%\qt.conf"
+echo Plugins = ./plugins >> "%RELEASE_DIR%\qt.conf"
+
+copy "%BUILD_DIR%\mediamatrix.dll" "%RELEASE_DIR%"
+copy "%BUILD_DIR%\mediamatrix.lib" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\lib_x64\libcob.lib" "%RELEASE_DIR%"
+
+:: Copy GnuCOBOL and other required DLLs to output directory
+copy "%GNUCOBOL_PATH%\bin_x64\libcob.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\libdb48.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\liblzma.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\libxml2.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\mpir.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\pdcurses.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\zlib1.dll" "%RELEASE_DIR%"
+copy "%GNUCOBOL_PATH%\bin_x64\cjson.dll" "%RELEASE_DIR%"
+
+echo Build completed successfully
 echo.
-echo Building complete! You can now run:
-echo bin\collector_gui.exe    - For GUI mode
-echo bin\collector_wrapper.exe --console    - For console mode
+echo To run the GUI application:
+echo   %RELEASE_DIR%\mediamatrix_gui.exe
 echo.
-pause 
+echo To run in console mode:
+echo   %RELEASE_DIR%\mediamatrix_console.exe
+
+endlocal
